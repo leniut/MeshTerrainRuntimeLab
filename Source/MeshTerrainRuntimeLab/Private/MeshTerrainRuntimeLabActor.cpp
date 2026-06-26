@@ -180,8 +180,8 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 			const int32 V01 = Row1 + X;
 			const int32 V11 = Row1 + X + 1;
 
-			AddTriangle(V00, V11, V01, PolygonGroup);
-			AddTriangle(V00, V10, V11, PolygonGroup);
+			AddTriangle(V00, V01, V11, PolygonGroup);
+			AddTriangle(V00, V11, V10, PolygonGroup);
 		}
 	}
 
