@@ -121,6 +121,28 @@ void AMeshTerrainRuntimeLabActor::ClearBuiltTerrain()
 	RuntimeStaticMesh = nullptr;
 }
 
+double AMeshTerrainRuntimeLabActor::EvaluateHeight(double U, double V) const
+{
+	const double ClampedHeightScale = FMath::Max(0.0, HeightScale);
+	const double ClampedHeightFrequency = FMath::Max(0.001, HeightFrequency);
+
+	switch (HeightMode)
+	{
+	case EMeshTerrainRuntimeLabHeightMode::Sine:
+		return FMath::Sin(U * UE_DOUBLE_TWO_PI * ClampedHeightFrequency)
+			* FMath::Cos(V * UE_DOUBLE_TWO_PI * ClampedHeightFrequency)
+			* ClampedHeightScale;
+
+	case EMeshTerrainRuntimeLabHeightMode::Noise:
+		return FMath::PerlinNoise2D(FVector2D(U * ClampedHeightFrequency, V * ClampedHeightFrequency))
+			* ClampedHeightScale;
+
+	case EMeshTerrainRuntimeLabHeightMode::Flat:
+	default:
+		return 0.0;
+	}
+}
+
 UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 {
 	const int32 ClampedQuadsX = FMath::Max(1, QuadsX);
@@ -152,7 +174,7 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 			const FVector Position(
 				(U - 0.5) * ClampedSizeX,
 				(V - 0.5) * ClampedSizeY,
-				0.0);
+				EvaluateHeight(U, V));
 
 			Vertices[Y * (ClampedQuadsX + 1) + X] = Builder.AppendVertex(Position);
 		}

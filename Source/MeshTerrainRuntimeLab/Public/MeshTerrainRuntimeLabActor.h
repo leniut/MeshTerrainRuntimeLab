@@ -10,6 +10,14 @@ class UMaterialInterface;
 class USceneComponent;
 class UStaticMesh;
 
+UENUM(BlueprintType)
+enum class EMeshTerrainRuntimeLabHeightMode : uint8
+{
+	Flat UMETA(DisplayName = "Flat"),
+	Sine UMETA(DisplayName = "Sine"),
+	Noise UMETA(DisplayName = "Noise")
+};
+
 /**
  * Runtime lab actor that creates a minimal MeshPartition compiled section.
  *
@@ -44,6 +52,7 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Mesh Terrain Runtime Lab")
 	TObjectPtr<USceneComponent> SceneRoot = nullptr;
 
+	double EvaluateHeight(double U, double V) const;
 	UStaticMesh* CreateFlatRuntimeStaticMesh();
 
 public:
@@ -61,6 +70,15 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab", meta = (ClampMin = "1.0", UIMin = "100.0"))
 	double SizeY = 2000.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|Height")
+	EMeshTerrainRuntimeLabHeightMode HeightMode = EMeshTerrainRuntimeLabHeightMode::Flat;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|Height", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	double HeightScale = 0.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|Height", meta = (ClampMin = "0.001", UIMin = "0.1"))
+	double HeightFrequency = 2.0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab", meta = (ClampMin = "0.001", UIMin = "0.1"))
 	double UVTilingX = 10.0;
