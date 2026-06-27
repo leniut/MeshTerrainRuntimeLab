@@ -165,6 +165,14 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 	TArray<FVertexID> Vertices;
 	Vertices.SetNum((ClampedQuadsX + 1) * (ClampedQuadsY + 1));
 
+	TArray<FVector> VertexPositions;
+	VertexPositions.SetNum(Vertices.Num());
+
+	auto GetVertexIndex = [ClampedQuadsX](int32 X, int32 Y)
+	{
+		return Y * (ClampedQuadsX + 1) + X;
+	};
+
 	for (int32 Y = 0; Y <= ClampedQuadsY; ++Y)
 	{
 		for (int32 X = 0; X <= ClampedQuadsX; ++X)
@@ -176,19 +184,54 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 				(V - 0.5) * ClampedSizeY,
 				EvaluateHeight(U, V));
 
-			Vertices[Y * (ClampedQuadsX + 1) + X] = Builder.AppendVertex(Position);
+			const int32 VertexIndex = GetVertexIndex(X, Y);
+			VertexPositions[VertexIndex] = Position;
+			Vertices[VertexIndex] = Builder.AppendVertex(Position);
 		}
 	}
 
-	auto AddTriangle = [&Builder, &Vertices, ClampedQuadsX, ClampedQuadsY, ClampedUVTilingX, ClampedUVTilingY](int32 A, int32 B, int32 C, const FPolygonGroupID& Group)
+	TArray<FVector> VertexNormals;
+	VertexNormals.SetNum(Vertices.Num());
+
+	TArray<FVector> VertexTangents;
+	VertexTangents.SetNum(Vertices.Num());
+
+	for (int32 Y = 0; Y <= ClampedQuadsY; ++Y)
+	{
+		for (int32 X = 0; X <= ClampedQuadsX; ++X)
+		{
+			const int32 LeftX = FMath::Max(0, X - 1);
+			const int32 RightX = FMath::Min(ClampedQuadsX, X + 1);
+			const int32 DownY = FMath::Max(0, Y - 1);
+			const int32 UpY = FMath::Min(ClampedQuadsY, Y + 1);
+
+			const FVector TangentX = VertexPositions[GetVertexIndex(RightX, Y)] - VertexPositions[GetVertexIndex(LeftX, Y)];
+			const FVector TangentY = VertexPositions[GetVertexIndex(X, UpY)] - VertexPositions[GetVertexIndex(X, DownY)];
+
+			FVector Normal = FVector::CrossProduct(TangentX, TangentY).GetSafeNormal(UE_SMALL_NUMBER, FVector::UpVector);
+			if (FVector::DotProduct(Normal, FVector::UpVector) < 0.0)
+			{
+				Normal *= -1.0;
+			}
+
+			FVector Tangent = TangentX - Normal * FVector::DotProduct(TangentX, Normal);
+			Tangent = Tangent.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
+
+			const int32 VertexIndex = GetVertexIndex(X, Y);
+			VertexNormals[VertexIndex] = Normal;
+			VertexTangents[VertexIndex] = Tangent;
+		}
+	}
+
+	auto AddTriangle = [&Builder, &Vertices, &VertexNormals, &VertexTangents, ClampedQuadsX, ClampedQuadsY, ClampedUVTilingX, ClampedUVTilingY](int32 A, int32 B, int32 C, const FPolygonGroupID& Group)
 	{
 		const FVertexInstanceID InstanceA = Builder.AppendInstance(Vertices[A]);
 		const FVertexInstanceID InstanceB = Builder.AppendInstance(Vertices[B]);
 		const FVertexInstanceID InstanceC = Builder.AppendInstance(Vertices[C]);
 
-		Builder.SetInstanceTangentSpace(InstanceA, FVector::UpVector, FVector::ForwardVector, 1.0f);
-		Builder.SetInstanceTangentSpace(InstanceB, FVector::UpVector, FVector::ForwardVector, 1.0f);
-		Builder.SetInstanceTangentSpace(InstanceC, FVector::UpVector, FVector::ForwardVector, 1.0f);
+		Builder.SetInstanceTangentSpace(InstanceA, VertexNormals[A], VertexTangents[A], 1.0f);
+		Builder.SetInstanceTangentSpace(InstanceB, VertexNormals[B], VertexTangents[B], 1.0f);
+		Builder.SetInstanceTangentSpace(InstanceC, VertexNormals[C], VertexTangents[C], 1.0f);
 
 		const auto SetInstanceUV = [&Builder, ClampedQuadsX, ClampedQuadsY, ClampedUVTilingX, ClampedUVTilingY](const FVertexInstanceID& Instance, int32 VertexIndex)
 		{
