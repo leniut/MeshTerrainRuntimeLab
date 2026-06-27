@@ -10,6 +10,15 @@ class UMaterialInterface;
 class USceneComponent;
 class UStaticMesh;
 
+namespace UE::MeshPartition
+{
+class ACompiledSection;
+class AMeshPartition;
+class FMeshData;
+class UMeshPartitionDefinition;
+struct FCompiledSectionBuildInfo;
+}
+
 UENUM(BlueprintType)
 enum class EMeshTerrainRuntimeLabHeightMode : uint8
 {
@@ -68,6 +77,15 @@ private:
 	bool HasValidHeightData() const;
 	double SampleHeightData(double U, double V) const;
 	double EvaluateHeight(double U, double V) const;
+	UE::MeshPartition::UMeshPartitionDefinition* ResolveMeshPartitionDefinition() const;
+	UMaterialInterface* ResolveTerrainMaterial() const;
+	UE::MeshPartition::ACompiledSection* CreateRuntimeCompiledSection(
+		UE::MeshPartition::AMeshPartition* MeshPartition,
+		const UE::MeshPartition::FCompiledSectionBuildInfo& BuildInfo);
+	void ApplyMinimalRuntimeChannelData(
+		UE::MeshPartition::ACompiledSection* CompiledSection,
+		const UE::MeshPartition::UMeshPartitionDefinition* Definition);
+	UE::MeshPartition::FMeshData CreateFlatRuntimeMeshData() const;
 	UStaticMesh* CreateFlatRuntimeStaticMesh();
 
 public:
@@ -107,6 +125,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab")
 	TObjectPtr<UMaterialInterface> Material = nullptr;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|MeshPartition")
+	TSoftObjectPtr<UE::MeshPartition::UMeshPartitionDefinition> MeshPartitionDefinition =
+		TSoftObjectPtr<UE::MeshPartition::UMeshPartitionDefinition>(
+			FSoftObjectPath(TEXT("/PCGPrimitives_MeshPartitionInterop/Assets/MeshPartitionDefinitions/MPD_Basic.MPD_Basic")));
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|MeshPartition")
+	FName BuildVariantName = NAME_Default;
+
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab")
 	TObjectPtr<AActor> SpawnedMeshPartition = nullptr;
 
@@ -115,4 +141,10 @@ public:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab")
 	TObjectPtr<UStaticMesh> RuntimeStaticMesh = nullptr;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab|Diagnostics")
+	int32 RuntimeChannelTableLength = 0;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab|Diagnostics")
+	FVector2D RuntimeChannelTexcoordDesc = FVector2D::ZeroVector;
 };

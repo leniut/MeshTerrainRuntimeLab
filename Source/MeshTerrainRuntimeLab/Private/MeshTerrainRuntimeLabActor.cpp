@@ -6,13 +6,24 @@
 #include "Engine/StaticMesh.h"
 #include "Materials/Material.h"
 #include "MeshDescription.h"
-#include "MeshDescriptionBuilder.h"
 #include "MeshPartition.h"
+#include "MeshPartitionChannel.h"
 #include "MeshPartitionCompiledSection.h"
+#include "MeshPartitionDefinition.h"
+#include "MeshPartitionMeshData.h"
 #include "MeshPartitionStaticMeshDescriptor.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "StaticMeshAttributes.h"
 #include "Components/SceneComponent.h"
+
+#if WITH_EDITOR
+#include "Materials/MaterialInstanceConstant.h"
+#endif
+
+namespace
+{
+const FName MeshPartitionStaticMeshMaterialSlotName(TEXT("MegaMeshStaticMeshMaterial"));
+}
 
 AMeshTerrainRuntimeLabActor::AMeshTerrainRuntimeLabActor()
 {
@@ -67,10 +78,33 @@ AActor* AMeshTerrainRuntimeLabActor::RebuildTerrain()
 		return nullptr;
 	}
 
-	UE::MeshPartition::ACompiledSection* CompiledSection = World->SpawnActor<UE::MeshPartition::ACompiledSection>(
-		UE::MeshPartition::ACompiledSection::StaticClass(),
-		FTransform::Identity,
-		SpawnParams);
+	UE::MeshPartition::UMeshPartitionDefinition* ResolvedDefinition = ResolveMeshPartitionDefinition();
+	if (ResolvedDefinition)
+	{
+		MeshPartition->SetMeshPartitionDefinition(ResolvedDefinition);
+	}
+
+	UE::MeshPartition::FCompiledSectionBuildInfo BuildInfo;
+	BuildInfo.BuildKey = FGuid::NewGuid();
+	BuildInfo.BuildVariantName = BuildVariantName.IsNone() ? NAME_Default : BuildVariantName;
+#if WITH_EDITORONLY_DATA
+	BuildInfo.MegaMeshGUID = MeshPartition->GetActorGuid().IsValid() ? MeshPartition->GetActorGuid() : FGuid::NewGuid();
+#else
+	BuildInfo.MegaMeshGUID = FGuid::NewGuid();
+#endif
+	BuildInfo.MegaMeshPath = MeshPartition;
+	BuildInfo.ModifiersHash = FGuid::NewGuid();
+	BuildInfo.ModifierSetHash = FGuid::NewGuid();
+	BuildInfo.PackageHash = FGuid::NewGuid();
+	BuildInfo.ClassHash = FGuid::NewGuid();
+	BuildInfo.BuildVariantHash = FGuid::NewGuid();
+
+	if (ResolvedDefinition)
+	{
+		BuildInfo.SetMegaMeshDefinition(ResolvedDefinition);
+	}
+
+	UE::MeshPartition::ACompiledSection* CompiledSection = CreateRuntimeCompiledSection(MeshPartition, BuildInfo);
 
 	if (!CompiledSection)
 	{
@@ -79,13 +113,12 @@ AActor* AMeshTerrainRuntimeLabActor::RebuildTerrain()
 		return nullptr;
 	}
 
-	CompiledSection->SetParent(MeshPartition);
-
 	UE::MeshPartition::FStaticMeshDescriptor Descriptor;
 	Descriptor.CollisionProfileName = bBuildSimpleCollision ? UCollisionProfile::BlockAll_ProfileName : UCollisionProfile::NoCollision_ProfileName;
 	Descriptor.bCanEverAffectNavigation = bBuildSimpleCollision;
 	Descriptor.UVRegion = FBox2f(FVector2f::ZeroVector, FVector2f(1.0f, 1.0f));
 
+	ApplyMinimalRuntimeChannelData(CompiledSection, ResolvedDefinition);
 	CompiledSection->AddStaticMesh(RuntimeStaticMesh, Descriptor);
 
 	SpawnedMeshPartition = MeshPartition;
@@ -157,6 +190,8 @@ void AMeshTerrainRuntimeLabActor::ClearBuiltTerrain()
 	}
 
 	RuntimeStaticMesh = nullptr;
+	RuntimeChannelTableLength = 0;
+	RuntimeChannelTexcoordDesc = FVector2D::ZeroVector;
 }
 
 bool AMeshTerrainRuntimeLabActor::HasValidHeightData() const
@@ -225,7 +260,108 @@ double AMeshTerrainRuntimeLabActor::EvaluateHeight(double U, double V) const
 	}
 }
 
-UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
+UE::MeshPartition::UMeshPartitionDefinition* AMeshTerrainRuntimeLabActor::ResolveMeshPartitionDefinition() const
+{
+	if (MeshPartitionDefinition.IsNull())
+	{
+		return nullptr;
+	}
+
+	return MeshPartitionDefinition.LoadSynchronous();
+}
+
+UMaterialInterface* AMeshTerrainRuntimeLabActor::ResolveTerrainMaterial() const
+{
+	UMaterialInterface* MeshMaterial = Material ? Material.Get() : nullptr;
+
+	if (!MeshMaterial)
+	{
+		if (const UE::MeshPartition::UMeshPartitionDefinition* ResolvedDefinition = ResolveMeshPartitionDefinition())
+		{
+			MeshMaterial = ResolvedDefinition->GetMaterial();
+		}
+	}
+
+	return MeshMaterial ? MeshMaterial : UMaterial::GetDefaultMaterial(MD_Surface);
+}
+
+UE::MeshPartition::ACompiledSection* AMeshTerrainRuntimeLabActor::CreateRuntimeCompiledSection(
+	UE::MeshPartition::AMeshPartition* MeshPartition,
+	const UE::MeshPartition::FCompiledSectionBuildInfo& BuildInfo)
+{
+	UWorld* World = GetWorld();
+	if (!World || !MeshPartition)
+	{
+		return nullptr;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+
+	UE::MeshPartition::ACompiledSection* Section = World->SpawnActor<UE::MeshPartition::ACompiledSection>(
+		UE::MeshPartition::ACompiledSection::StaticClass(),
+		FTransform::Identity,
+		SpawnParams);
+
+	if (!Section)
+	{
+		return nullptr;
+	}
+
+#if WITH_EDITOR
+	Section->SetActorLabel(TEXT("CompiledSection_") + BuildInfo.BuildVariantName.ToString());
+#endif
+
+	Section->SetParent(MeshPartition);
+
+	if (USceneComponent* SectionRoot = Section->GetRootComponent())
+	{
+		SectionRoot->SetMobility(EComponentMobility::Static);
+	}
+
+	Section->SetBuildInfo(BuildInfo);
+
+#if WITH_EDITOR
+	UMaterialInstanceConstant* MaterialInstance = NewObject<UMaterialInstanceConstant>(
+		Section->GetPackage(),
+		MakeUniqueObjectName(Section, UMaterialInstanceConstant::StaticClass(), TEXT("CompiledSectionMIC")));
+
+	if (MaterialInstance)
+	{
+		MaterialInstance->SetParentEditorOnly(ResolveTerrainMaterial(), false);
+		Section->SetMaterialInstance(MaterialInstance);
+	}
+#endif
+
+	return Section;
+}
+
+void AMeshTerrainRuntimeLabActor::ApplyMinimalRuntimeChannelData(
+	UE::MeshPartition::ACompiledSection* CompiledSection,
+	const UE::MeshPartition::UMeshPartitionDefinition* Definition)
+{
+	if (!CompiledSection)
+	{
+		return;
+	}
+
+	const int32 NumChannels = Definition ? FMath::Max(0, Definition->GetChannelMap().GetNumChannels()) : 0;
+
+	TArray<uint8> ChannelTable;
+	ChannelTable.Init(UE::MeshPartition::FChannelPacking::SlotInvalid, NumChannels);
+
+	const float UnitPerU = static_cast<float>(FMath::Max(1.0, SizeX) / FMath::Max(0.001, UVTilingX));
+	const float UnitPerV = static_cast<float>(FMath::Max(1.0, SizeY) / FMath::Max(0.001, UVTilingY));
+	const FVector2f ChannelTexcoordDesc(UnitPerU, UnitPerV);
+	CompiledSection->SetChannelData(ChannelTable, ChannelTexcoordDesc);
+
+	RuntimeChannelTableLength = ChannelTable.Num();
+	RuntimeChannelTexcoordDesc = FVector2D(
+		static_cast<double>(ChannelTexcoordDesc.X),
+		static_cast<double>(ChannelTexcoordDesc.Y));
+}
+
+UE::MeshPartition::FMeshData AMeshTerrainRuntimeLabActor::CreateFlatRuntimeMeshData() const
 {
 	const int32 ClampedQuadsX = FMath::Max(1, QuadsX);
 	const int32 ClampedQuadsY = FMath::Max(1, QuadsY);
@@ -234,17 +370,12 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 	const double ClampedUVTilingX = FMath::Max(0.001, UVTilingX);
 	const double ClampedUVTilingY = FMath::Max(0.001, UVTilingY);
 
-	FMeshDescription MeshDescription;
-	FStaticMeshAttributes(MeshDescription).Register();
+	UE::MeshPartition::FMeshData MeshData;
+	MeshData.SetNumSourceUVChannels(1);
+	MeshData.ReserveAdditionalVertices((ClampedQuadsX + 1) * (ClampedQuadsY + 1));
+	MeshData.ReserveAdditionalTriangles(ClampedQuadsX * ClampedQuadsY * 2);
 
-	FMeshDescriptionBuilder Builder;
-	Builder.SetMeshDescription(&MeshDescription);
-	Builder.SetNumUVLayers(1);
-	Builder.ReserveNewVertices((ClampedQuadsX + 1) * (ClampedQuadsY + 1));
-
-	const FPolygonGroupID PolygonGroup = Builder.AppendPolygonGroup(TEXT("RuntimeTerrain"));
-
-	TArray<FVertexID> Vertices;
+	TArray<int32> Vertices;
 	Vertices.SetNum((ClampedQuadsX + 1) * (ClampedQuadsY + 1));
 
 	TArray<FVector> VertexPositions;
@@ -268,15 +399,18 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 
 			const int32 VertexIndex = GetVertexIndex(X, Y);
 			VertexPositions[VertexIndex] = Position;
-			Vertices[VertexIndex] = Builder.AppendVertex(Position);
+			Vertices[VertexIndex] = MeshData.AppendVertex(FVector3d(Position));
+
+			const FVector2f UV(
+				static_cast<float>(U * ClampedUVTilingX),
+				static_cast<float>(V * ClampedUVTilingY));
+			MeshData.SetChannelUV(Vertices[VertexIndex], UV);
+			MeshData.SetVertexUV(Vertices[VertexIndex], UV, 0);
 		}
 	}
 
 	TArray<FVector> VertexNormals;
 	VertexNormals.SetNum(Vertices.Num());
-
-	TArray<FVector> VertexTangents;
-	VertexTangents.SetNum(Vertices.Num());
 
 	for (int32 Y = 0; Y <= ClampedQuadsY; ++Y)
 	{
@@ -296,40 +430,15 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 				Normal *= -1.0;
 			}
 
-			FVector Tangent = TangentX - Normal * FVector::DotProduct(TangentX, Normal);
-			Tangent = Tangent.GetSafeNormal(UE_SMALL_NUMBER, FVector::ForwardVector);
-
 			const int32 VertexIndex = GetVertexIndex(X, Y);
 			VertexNormals[VertexIndex] = Normal;
-			VertexTangents[VertexIndex] = Tangent;
+			MeshData.SetVertexNormal(Vertices[VertexIndex], FVector3f(Normal));
 		}
 	}
 
-	auto AddTriangle = [&Builder, &Vertices, &VertexNormals, &VertexTangents, ClampedQuadsX, ClampedQuadsY, ClampedUVTilingX, ClampedUVTilingY](int32 A, int32 B, int32 C, const FPolygonGroupID& Group)
+	auto AddTriangle = [&MeshData, &Vertices](int32 A, int32 B, int32 C)
 	{
-		const FVertexInstanceID InstanceA = Builder.AppendInstance(Vertices[A]);
-		const FVertexInstanceID InstanceB = Builder.AppendInstance(Vertices[B]);
-		const FVertexInstanceID InstanceC = Builder.AppendInstance(Vertices[C]);
-
-		Builder.SetInstanceTangentSpace(InstanceA, VertexNormals[A], VertexTangents[A], 1.0f);
-		Builder.SetInstanceTangentSpace(InstanceB, VertexNormals[B], VertexTangents[B], 1.0f);
-		Builder.SetInstanceTangentSpace(InstanceC, VertexNormals[C], VertexTangents[C], 1.0f);
-
-		const auto SetInstanceUV = [&Builder, ClampedQuadsX, ClampedQuadsY, ClampedUVTilingX, ClampedUVTilingY](const FVertexInstanceID& Instance, int32 VertexIndex)
-		{
-			const int32 VertexX = VertexIndex % (ClampedQuadsX + 1);
-			const int32 VertexY = VertexIndex / (ClampedQuadsX + 1);
-			const FVector2D UV(
-				static_cast<double>(VertexX) / static_cast<double>(ClampedQuadsX) * ClampedUVTilingX,
-				static_cast<double>(VertexY) / static_cast<double>(ClampedQuadsY) * ClampedUVTilingY);
-			Builder.SetInstanceUV(Instance, UV, 0);
-		};
-
-		SetInstanceUV(InstanceA, A);
-		SetInstanceUV(InstanceB, B);
-		SetInstanceUV(InstanceC, C);
-
-		Builder.AppendTriangle(InstanceA, InstanceB, InstanceC, Group);
+		MeshData.AppendTriangle(UE::Geometry::FIndex3i(Vertices[A], Vertices[B], Vertices[C]));
 	};
 
 	for (int32 Y = 0; Y < ClampedQuadsY; ++Y)
@@ -344,10 +453,22 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 			const int32 V01 = Row1 + X;
 			const int32 V11 = Row1 + X + 1;
 
-			AddTriangle(V00, V01, V11, PolygonGroup);
-			AddTriangle(V00, V11, V10, PolygonGroup);
+			AddTriangle(V00, V01, V11);
+			AddTriangle(V00, V11, V10);
 		}
 	}
+
+	MeshData.SummarizeUVRegion();
+	return MeshData;
+}
+
+UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
+{
+	const UE::MeshPartition::FMeshData MeshData = CreateFlatRuntimeMeshData();
+
+	FMeshDescription MeshDescription;
+	FStaticMeshAttributes(MeshDescription).Register();
+	MeshData.ConvertToMeshDescription(MeshDescription);
 
 	UStaticMesh* StaticMesh = NewObject<UStaticMesh>(this, MakeUniqueObjectName(this, UStaticMesh::StaticClass(), TEXT("RuntimeMeshTerrain")));
 	if (!StaticMesh)
@@ -355,14 +476,21 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 		return nullptr;
 	}
 
-	UMaterialInterface* MeshMaterial = Material ? Material.Get() : UMaterial::GetDefaultMaterial(MD_Surface);
-	StaticMesh->GetStaticMaterials().Add(FStaticMaterial(MeshMaterial, TEXT("RuntimeTerrain")));
+	StaticMesh->bSupportRayTracing = true;
+	StaticMesh->bGenerateMeshDistanceField = false;
+
+	FStaticMaterial StaticMaterial;
+	StaticMaterial.MaterialInterface = ResolveTerrainMaterial();
+	StaticMaterial.MaterialSlotName = MeshPartitionStaticMeshMaterialSlotName;
+	StaticMaterial.ImportedMaterialSlotName = MeshPartitionStaticMeshMaterialSlotName;
+	StaticMaterial.UVChannelData = FMeshUVChannelInfo(1.0f);
+	StaticMesh->SetStaticMaterials({ StaticMaterial });
 
 	UStaticMesh::FBuildMeshDescriptionsParams BuildParams;
 	BuildParams.bFastBuild = true;
 	BuildParams.bCommitMeshDescription = true;
 	BuildParams.bMarkPackageDirty = false;
-	BuildParams.bBuildSimpleCollision = bBuildSimpleCollision;
+	BuildParams.bBuildSimpleCollision = false;
 	BuildParams.bAllowCpuAccess = true;
 
 	if (!StaticMesh->BuildFromMeshDescriptions({ &MeshDescription }, BuildParams))
@@ -372,7 +500,20 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 
 	if (UBodySetup* BodySetup = StaticMesh->GetBodySetup())
 	{
-		BodySetup->CollisionTraceFlag = bBuildSimpleCollision ? CTF_UseSimpleAsComplex : CTF_UseDefault;
+		if (bBuildSimpleCollision)
+		{
+			BodySetup->CollisionTraceFlag = CTF_UseComplexAsSimple;
+			BodySetup->InvalidatePhysicsData();
+			BodySetup->CreatePhysicsMeshes();
+		}
+		else
+		{
+			BodySetup->CollisionTraceFlag = CTF_UseDefault;
+			BodySetup->DefaultInstance.SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
+			BodySetup->bNeverNeedsCookedCollisionData = true;
+			BodySetup->bHasCookedCollisionData = false;
+			BodySetup->InvalidatePhysicsData();
+		}
 	}
 
 	return StaticMesh;

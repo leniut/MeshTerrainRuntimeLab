@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class MeshTerrainRuntimeLabEditor : ModuleRules
@@ -21,12 +22,18 @@ public class MeshTerrainRuntimeLabEditor : ModuleRules
 			new string[]
 			{
 				"AssetRegistry",
+				"Json",
 				"MeshConversion",
 				"MeshDescription",
+				"MeshPartition",
+				"MeshPartitionEditor",
 				"MeshTerrainRuntimeLab",
 				"StaticMeshDescription",
+				"ToolsetRegistry",
 				"UnrealEd"
 			}
 			);
+
+		PrivateIncludePaths.Add(Path.Combine(EngineDirectory, "Source", "Runtime", "Engine", "Internal"));
 	}
 }
