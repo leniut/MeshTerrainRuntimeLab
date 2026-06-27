@@ -112,6 +112,8 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 	const int32 ClampedQuadsY = FMath::Max(1, QuadsY);
 	const double ClampedSizeX = FMath::Max(1.0, SizeX);
 	const double ClampedSizeY = FMath::Max(1.0, SizeY);
+	const double ClampedUVTilingX = FMath::Max(0.001, UVTilingX);
+	const double ClampedUVTilingY = FMath::Max(0.001, UVTilingY);
 
 	FMeshDescription MeshDescription;
 	FStaticMeshAttributes(MeshDescription).Register();
@@ -141,7 +143,7 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 		}
 	}
 
-	auto AddTriangle = [&Builder, &Vertices, ClampedQuadsX, ClampedQuadsY](int32 A, int32 B, int32 C, const FPolygonGroupID& Group)
+	auto AddTriangle = [&Builder, &Vertices, ClampedQuadsX, ClampedQuadsY, ClampedUVTilingX, ClampedUVTilingY](int32 A, int32 B, int32 C, const FPolygonGroupID& Group)
 	{
 		const FVertexInstanceID InstanceA = Builder.AppendInstance(Vertices[A]);
 		const FVertexInstanceID InstanceB = Builder.AppendInstance(Vertices[B]);
@@ -151,13 +153,13 @@ UStaticMesh* AMeshTerrainRuntimeLabActor::CreateFlatRuntimeStaticMesh()
 		Builder.SetInstanceTangentSpace(InstanceB, FVector::UpVector, FVector::ForwardVector, 1.0f);
 		Builder.SetInstanceTangentSpace(InstanceC, FVector::UpVector, FVector::ForwardVector, 1.0f);
 
-		const auto SetInstanceUV = [&Builder, ClampedQuadsX, ClampedQuadsY](const FVertexInstanceID& Instance, int32 VertexIndex)
+		const auto SetInstanceUV = [&Builder, ClampedQuadsX, ClampedQuadsY, ClampedUVTilingX, ClampedUVTilingY](const FVertexInstanceID& Instance, int32 VertexIndex)
 		{
 			const int32 VertexX = VertexIndex % (ClampedQuadsX + 1);
 			const int32 VertexY = VertexIndex / (ClampedQuadsX + 1);
 			const FVector2D UV(
-				static_cast<double>(VertexX) / static_cast<double>(ClampedQuadsX),
-				static_cast<double>(VertexY) / static_cast<double>(ClampedQuadsY));
+				static_cast<double>(VertexX) / static_cast<double>(ClampedQuadsX) * ClampedUVTilingX,
+				static_cast<double>(VertexY) / static_cast<double>(ClampedQuadsY) * ClampedUVTilingY);
 			Builder.SetInstanceUV(Instance, UV, 0);
 		};
 
