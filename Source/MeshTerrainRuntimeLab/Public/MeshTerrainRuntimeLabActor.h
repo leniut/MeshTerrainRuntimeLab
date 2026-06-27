@@ -26,7 +26,13 @@ public:
 	AMeshTerrainRuntimeLabActor();
 
 	UFUNCTION(BlueprintCallable, Category = "Mesh Terrain Runtime Lab")
+	AActor* RebuildTerrain();
+
+	UFUNCTION(BlueprintCallable, Category = "Mesh Terrain Runtime Lab")
 	AActor* BuildFlatMeshTerrain();
+
+	UFUNCTION(BlueprintCallable, Category = "Mesh Terrain Runtime Lab")
+	void SetTerrainMaterial(UMaterialInterface* NewMaterial, bool bRebuildNow = true);
 
 	UFUNCTION(BlueprintCallable, Category = "Mesh Terrain Runtime Lab")
 	void ClearBuiltTerrain();

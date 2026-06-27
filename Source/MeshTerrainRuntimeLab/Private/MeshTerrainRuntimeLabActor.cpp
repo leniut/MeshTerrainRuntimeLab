@@ -28,11 +28,16 @@ void AMeshTerrainRuntimeLabActor::BeginPlay()
 
 	if (bBuildOnBeginPlay)
 	{
-		BuildFlatMeshTerrain();
+		RebuildTerrain();
 	}
 }
 
 AActor* AMeshTerrainRuntimeLabActor::BuildFlatMeshTerrain()
+{
+	return RebuildTerrain();
+}
+
+AActor* AMeshTerrainRuntimeLabActor::RebuildTerrain()
 {
 	ClearBuiltTerrain();
 
@@ -87,6 +92,16 @@ AActor* AMeshTerrainRuntimeLabActor::BuildFlatMeshTerrain()
 	SpawnedCompiledSection = CompiledSection;
 
 	return CompiledSection;
+}
+
+void AMeshTerrainRuntimeLabActor::SetTerrainMaterial(UMaterialInterface* NewMaterial, bool bRebuildNow)
+{
+	Material = NewMaterial;
+
+	if (bRebuildNow)
+	{
+		RebuildTerrain();
+	}
 }
 
 void AMeshTerrainRuntimeLabActor::ClearBuiltTerrain()
