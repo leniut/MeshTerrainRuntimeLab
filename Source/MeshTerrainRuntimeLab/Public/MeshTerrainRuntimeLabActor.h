@@ -15,7 +15,8 @@ enum class EMeshTerrainRuntimeLabHeightMode : uint8
 {
 	Flat UMETA(DisplayName = "Flat"),
 	Sine UMETA(DisplayName = "Sine"),
-	Noise UMETA(DisplayName = "Noise")
+	Noise UMETA(DisplayName = "Noise"),
+	HeightData UMETA(DisplayName = "Height Data")
 };
 
 /**
@@ -43,6 +44,9 @@ public:
 	void SetTerrainMaterial(UMaterialInterface* NewMaterial, bool bRebuildNow = true);
 
 	UFUNCTION(BlueprintCallable, Category = "Mesh Terrain Runtime Lab")
+	bool SetHeightData(const TArray<float>& InHeights, int32 InWidth, int32 InHeight, bool bRebuildNow = true);
+
+	UFUNCTION(BlueprintCallable, Category = "Mesh Terrain Runtime Lab")
 	void ClearBuiltTerrain();
 
 protected:
@@ -52,6 +56,17 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Mesh Terrain Runtime Lab")
 	TObjectPtr<USceneComponent> SceneRoot = nullptr;
 
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab|Height Data", meta = (AllowPrivateAccess = "true"))
+	TArray<float> HeightData;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab|Height Data", meta = (AllowPrivateAccess = "true"))
+	int32 HeightDataWidth = 0;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab|Height Data", meta = (AllowPrivateAccess = "true"))
+	int32 HeightDataHeight = 0;
+
+	bool HasValidHeightData() const;
+	double SampleHeightData(double U, double V) const;
 	double EvaluateHeight(double U, double V) const;
 	UStaticMesh* CreateFlatRuntimeStaticMesh();
 

@@ -104,6 +104,44 @@ void AMeshTerrainRuntimeLabActor::SetTerrainMaterial(UMaterialInterface* NewMate
 	}
 }
 
+bool AMeshTerrainRuntimeLabActor::SetHeightData(const TArray<float>& InHeights, int32 InWidth, int32 InHeight, bool bRebuildNow)
+{
+	const bool bIsValid = InWidth >= 2
+		&& InHeight >= 2
+		&& InHeights.Num() == InWidth * InHeight;
+
+	if (!bIsValid)
+	{
+		HeightData.Reset();
+		HeightDataWidth = 0;
+		HeightDataHeight = 0;
+
+		if (HeightMode == EMeshTerrainRuntimeLabHeightMode::HeightData)
+		{
+			HeightMode = EMeshTerrainRuntimeLabHeightMode::Flat;
+		}
+
+		if (bRebuildNow)
+		{
+			RebuildTerrain();
+		}
+
+		return false;
+	}
+
+	HeightData = InHeights;
+	HeightDataWidth = InWidth;
+	HeightDataHeight = InHeight;
+	HeightMode = EMeshTerrainRuntimeLabHeightMode::HeightData;
+
+	if (bRebuildNow)
+	{
+		RebuildTerrain();
+	}
+
+	return true;
+}
+
 void AMeshTerrainRuntimeLabActor::ClearBuiltTerrain()
 {
 	if (SpawnedCompiledSection)
@@ -121,6 +159,47 @@ void AMeshTerrainRuntimeLabActor::ClearBuiltTerrain()
 	RuntimeStaticMesh = nullptr;
 }
 
+bool AMeshTerrainRuntimeLabActor::HasValidHeightData() const
+{
+	return HeightDataWidth >= 2
+		&& HeightDataHeight >= 2
+		&& HeightData.Num() == HeightDataWidth * HeightDataHeight;
+}
+
+double AMeshTerrainRuntimeLabActor::SampleHeightData(double U, double V) const
+{
+	if (!HasValidHeightData())
+	{
+		return 0.0;
+	}
+
+	const double SampleX = FMath::Clamp(U, 0.0, 1.0) * static_cast<double>(HeightDataWidth - 1);
+	const double SampleY = FMath::Clamp(V, 0.0, 1.0) * static_cast<double>(HeightDataHeight - 1);
+
+	const int32 X0 = FMath::Clamp(FMath::FloorToInt(SampleX), 0, HeightDataWidth - 1);
+	const int32 Y0 = FMath::Clamp(FMath::FloorToInt(SampleY), 0, HeightDataHeight - 1);
+	const int32 X1 = FMath::Min(X0 + 1, HeightDataWidth - 1);
+	const int32 Y1 = FMath::Min(Y0 + 1, HeightDataHeight - 1);
+
+	const double AlphaX = SampleX - static_cast<double>(X0);
+	const double AlphaY = SampleY - static_cast<double>(Y0);
+
+	const auto GetHeight = [this](int32 X, int32 Y)
+	{
+		return static_cast<double>(HeightData[Y * HeightDataWidth + X]);
+	};
+
+	const double Height00 = GetHeight(X0, Y0);
+	const double Height10 = GetHeight(X1, Y0);
+	const double Height01 = GetHeight(X0, Y1);
+	const double Height11 = GetHeight(X1, Y1);
+
+	const double HeightX0 = FMath::Lerp(Height00, Height10, AlphaX);
+	const double HeightX1 = FMath::Lerp(Height01, Height11, AlphaX);
+
+	return FMath::Lerp(HeightX0, HeightX1, AlphaY);
+}
+
 double AMeshTerrainRuntimeLabActor::EvaluateHeight(double U, double V) const
 {
 	const double ClampedHeightScale = FMath::Max(0.0, HeightScale);
@@ -136,6 +215,9 @@ double AMeshTerrainRuntimeLabActor::EvaluateHeight(double U, double V) const
 	case EMeshTerrainRuntimeLabHeightMode::Noise:
 		return FMath::PerlinNoise2D(FVector2D(U * ClampedHeightFrequency, V * ClampedHeightFrequency))
 			* ClampedHeightScale;
+
+	case EMeshTerrainRuntimeLabHeightMode::HeightData:
+		return SampleHeightData(U, V);
 
 	case EMeshTerrainRuntimeLabHeightMode::Flat:
 	default:
