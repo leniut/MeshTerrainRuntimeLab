@@ -85,8 +85,28 @@ private:
 	void ApplyMinimalRuntimeChannelData(
 		UE::MeshPartition::ACompiledSection* CompiledSection,
 		const UE::MeshPartition::UMeshPartitionDefinition* Definition);
+
+	/**
+	 * Non-editor runtime parity: ACompiledSection::SetMaterialInstance only accepts a
+	 * UMaterialInstanceConstant (not creatable at runtime) and its channel-texture binding is
+	 * editor-only. So in packaged/Shipping builds this assigns a UMaterialInstanceDynamic (with the
+	 * channel texture bound) directly to the section's generated mesh components. No-op in editor,
+	 * where the UMaterialInstanceConstant path already runs.
+	 */
+	void ApplyRuntimeMaterialInstance(
+		UE::MeshPartition::ACompiledSection* CompiledSection,
+		UMaterialInterface* ResolvedMaterial);
 	UE::MeshPartition::FMeshData CreateFlatRuntimeMeshData() const;
-	UStaticMesh* CreateFlatRuntimeStaticMesh();
+	UStaticMesh* CreateFlatRuntimeStaticMesh(FBox2f& OutUVRegion);
+
+	/**
+	 * Manual runtime Nanite build: constructs Nanite::IBuilderModule::FInputMeshData from the
+	 * runtime grid, calls IBuilderModule::Build() to produce Nanite::FResources, attaches them to
+	 * the static mesh render data and uploads them via InitResources. Returns true if valid Nanite
+	 * data was produced. In this plugin it is compiled for editor targets only; packaged Nanite
+	 * remains a separate source-engine spike.
+	 */
+	bool BuildAndInjectRuntimeNanite(UStaticMesh* StaticMesh, const UE::MeshPartition::FMeshData& MeshData) const;
 
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab")
@@ -119,19 +139,70 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab", meta = (ClampMin = "0.001", UIMin = "0.1"))
 	double UVTilingY = 10.0;
 
+	/**
+	 * Build simple collision for the runtime terrain. IMPORTANT: this is ignored for the render build
+	 * variant (HighEndPlatform_RenderData, the default BuildVariantName), because render sections
+	 * mirror the editor and never carry collision. To actually get collision, select a gameplay build
+	 * variant; otherwise the terrain stays NoCollision regardless of this flag (a warning is logged).
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab")
 	bool bBuildSimpleCollision = true;
+
+	/**
+	 * Adds the same 10-unit edge skirt that the editor StaticMeshTransformer uses for section
+	 * bounds/parity checks. Keep this disabled for visual runtime tests: the main terrain surface
+	 * is flat, but the lowered border intentionally looks like a lip and casts edge shadows.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|MeshPartition")
+	bool bApplyEditorSkirtForParity = false;
+
+	/**
+	 * Build real Nanite render data for the runtime terrain mesh, matching the editor render
+	 * variant (HighEndPlatform_RenderData).
+	 *
+	 * SPIKE / HARD ENGINE CONSTRAINT: this only works in Editor/PIE builds. UStaticMesh's full
+	 * (Nanite-capable) build path is WITH_EDITOR-only; in packaged/Shipping builds
+	 * BuildFromMeshDescriptions hard-asserts bFastBuild==true and the fast path never builds
+	 * Nanite. In non-editor builds this flag is therefore ignored (no Nanite). True runtime
+	 * Nanite in a packaged game would require linking the Developer NaniteBuilder module and
+	 * calling Nanite::IBuilderModule::Build() directly (the Voxel Plugin approach) - out of scope
+	 * for this spike. Note: the editor full build is significantly slower than the fast build.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|Nanite")
+	bool bBuildNaniteData = true;
+
+	/**
+	 * Use the manual Nanite build path (Nanite::IBuilderModule::Build -> FResources ->
+	 * RenderData->NaniteResourcesPtr -> InitResources) instead of relying on the editor-only
+	 * UStaticMesh full build. This is the ONLY route that can produce Nanite in a packaged
+	 * (non-editor) runtime build (Voxel Plugin approach), but this plugin currently links that
+	 * Developer module only for Editor/PIE targets. Packaged Nanite remains a separate
+	 * source-engine experiment; when this path is unavailable the diagnostic stays false.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|Nanite")
+	bool bUseManualNaniteBuilder = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab")
 	TObjectPtr<UMaterialInterface> Material = nullptr;
 
+	/**
+	 * Optional MeshPartition definition asset. Leave empty (default) to defer to the engine's
+	 * configured default definition, exactly as AMeshPartition::InitializeDefinition() does:
+	 * MeshPartition::USettings::GetDefaultDefinition() (DefaultMeshPartition.ini ->
+	 * /MeshPartition/DataAssets/MPD_Default). If that cannot be resolved either,
+	 * ResolveMeshPartitionDefinition() falls back to the class default object.
+	 * Set this only to force a specific custom definition.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|MeshPartition")
-	TSoftObjectPtr<UE::MeshPartition::UMeshPartitionDefinition> MeshPartitionDefinition =
-		TSoftObjectPtr<UE::MeshPartition::UMeshPartitionDefinition>(
-			FSoftObjectPath(TEXT("/PCGPrimitives_MeshPartitionInterop/Assets/MeshPartitionDefinitions/MPD_Basic.MPD_Basic")));
+	TSoftObjectPtr<UE::MeshPartition::UMeshPartitionDefinition> MeshPartitionDefinition;
 
+	/**
+	 * Build variant of the definition this terrain targets. Defaults to the render variant of
+	 * MPD_Default ("HighEndPlatform_RenderData"), which carries the StaticMeshTransformer
+	 * (Nanite render data) rather than "Common_GameplayData" (collision/gameplay only).
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Terrain Runtime Lab|MeshPartition")
-	FName BuildVariantName = NAME_Default;
+	FName BuildVariantName = TEXT("HighEndPlatform_RenderData");
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab")
 	TObjectPtr<AActor> SpawnedMeshPartition = nullptr;
@@ -147,4 +218,11 @@ public:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab|Diagnostics")
 	FVector2D RuntimeChannelTexcoordDesc = FVector2D::ZeroVector;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab|Diagnostics")
+	FString RuntimeChannelTexturePath;
+
+	/** Whether the last runtime build produced valid Nanite data (editor/PIE only). */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Mesh Terrain Runtime Lab|Diagnostics")
+	bool bRuntimeNaniteDataValid = false;
 };
